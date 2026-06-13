@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "X/Twitter 视频下载器",
-  "version": "3.0",
+  "version": "3.1",
   "description": "浮动按钮一键下载 X/Twitter 视频最高画质 MP4，不侵入页面 DOM",
-  "permissions": ["storage", "downloads", "cookies"],
+  "permissions": ["storage", "downloads"],
   "host_permissions": ["*://x.com/*", "*://twitter.com/*", "*://video.twimg.com/*", "*://api.twitter.com/*"],
   "background": {
     "service_worker": "background.js"
