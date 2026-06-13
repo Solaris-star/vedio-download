@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "X/Twitter 视频下载器",
+  "version": "1.0",
+  "description": "在 X/Twitter 视频上直接添加下载按钮，一键下载最高画质 MP4 视频",
+  "permissions": ["storage", "downloads"],
+  "host_permissions": ["*://x.com/*", "*://twitter.com/*", "*://video.twimg.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://x.com/*", "*://twitter.com/*"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page.js"],
+      "matches": ["*://x.com/*", "*://twitter.com/*"]
+    }
+  ],
+  "icons": {
+    "128": "icon.png"
+  }
+}
