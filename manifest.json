@@ -1,16 +1,20 @@
 {
   "manifest_version": 3,
   "name": "X/Twitter 视频下载器",
-  "version": "4.0",
-  "description": "浮动按钮一键下载 X/Twitter 视频，支持分辨率选择（1080p/720p/360p），无需登录即可获取公开推文视频",
-  "permissions": ["storage", "downloads"],
-  "host_permissions": ["*://x.com/*", "*://twitter.com/*", "*://video.twimg.com/*", "*://api.twitter.com/*"],
+  "version": "5.0",
+  "description": "浮动按钮一键下载 X/Twitter 视频，支持分辨率选择（1080p/720p/360p），无需登录",
+  "permissions": ["downloads"],
+  "host_permissions": [
+    "*://x.com/*",
+    "*://video.twimg.com/*",
+    "*://cdn.syndication.twimg.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["*://x.com/*", "*://twitter.com/*"],
+      "matches": ["*://x.com/*"],
       "js": ["content.js"],
       "run_at": "document_end"
     }
