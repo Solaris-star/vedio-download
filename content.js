@@ -1,7 +1,12 @@
-// X/Twitter 视频下载器 v4
-// Content Script：浮动按钮 + 分辨率选择，API 全权交给 background.js（Guest Token 方案）
+// 社交视频下载器 v6
+// Content Script：支持 X/Twitter + 小红书
+// X/Twitter: 浮动按钮 + 分辨率选择，API 交给 background.js
+// 小红书：直接读取页面 video 标签的视频地址，无需后端 API
 
-// ---------- 分辨率映射 ----------
+// ---------- 平台判断 ----------
+const PLATFORM = location.hostname === 'www.xiaohongshu.com' ? 'xhs' : 'x';
+
+// ---------- 分辨率映射 (X/Twitter) ----------
 const BITRATE_TO_RES = {
   256:   '270p',
   832:   '360p',
@@ -48,7 +53,7 @@ function showToast(msg, duration) {
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, duration);
 }
 
-// ---------- 分辨率选择弹窗 ----------
+// ---------- 分辨率选择弹窗 (X/Twitter) ----------
 function removePopup() {
   const old = document.getElementById('xdl-res-popup');
   if (old) old.remove();
@@ -172,44 +177,153 @@ function ensureButton() {
 
   btn.onclick = async (e) => {
     e.stopPropagation();
-    const tweetId = btn.dataset.tweetId;
-    if (!tweetId) return;
-
-    btn.textContent = '⏳ 获取视频信息...';
-    btn.style.pointerEvents = 'none';
-
-    // 委托 background.js 去调 GraphQL API
-    chrome.runtime.sendMessage(
-      { action: 'xdl-get-variants', tweetId },
-      (response) => {
-        btn.textContent = '⬇ 下载视频';
-        btn.style.pointerEvents = 'auto';
-
-        if (response?.error) {
-          showToast('❌ ' + response.error);
-          return;
-        }
-
-        if (response?.variants && response.variants.length > 0) {
-          showResolutionPicker(response.variants, tweetId);
-        } else {
-          showToast('❌ 该推文中未找到可下载的视频');
-        }
-      }
-    );
+    if (PLATFORM === 'xhs') {
+      await handleXhsDownload(btn);
+    } else {
+      await handleXDownload(btn);
+    }
   };
 
   document.body.appendChild(btn);
   return btn;
 }
 
+// ---------- X/Twitter 下载流程 ----------
+async function handleXDownload(btn) {
+  const tweetId = btn.dataset.tweetId;
+  if (!tweetId) return;
+
+  btn.textContent = '⏳ 获取视频信息...';
+  btn.style.pointerEvents = 'none';
+
+  chrome.runtime.sendMessage(
+    { action: 'xdl-get-variants', tweetId },
+    (response) => {
+      btn.textContent = '⬇ 下载视频';
+      btn.style.pointerEvents = 'auto';
+
+      if (response?.error) {
+        showToast('❌ ' + response.error);
+        return;
+      }
+
+      if (response?.variants && response.variants.length > 0) {
+        showResolutionPicker(response.variants, tweetId);
+      } else {
+        showToast('❌ 该推文中未找到可下载的视频');
+      }
+    }
+  );
+}
+
+// ---------- 小红书视频 URL 提取 ----------
+function extractXhsVideoUrl(videoEl) {
+  // 1. 直接读 video 标签属性
+  let url = videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src') || '';
+  if (url && !url.startsWith('blob:') && !url.startsWith('javascript:')) return url;
+
+  // 2. 检查 source 子标签
+  const sources = videoEl.querySelectorAll('source');
+  for (const s of sources) {
+    const src = s.src || s.getAttribute('src');
+    if (src && !src.startsWith('blob:')) return src;
+  }
+
+  // 3. 检查 data 属性
+  for (const key of ['url', 'src', 'video-url', 'videoUrl', 'data-url']) {
+    const v = videoEl.dataset[key] || videoEl.getAttribute(`data-${key}`);
+    if (v && !v.startsWith('blob:')) return v;
+  }
+
+  return null;
+}
+
+// 尝试从页面脚本注入读取小红书初始状态（备用方案）
+function tryGetXhsVideoFromPageState() {
+  return new Promise((resolve) => {
+    const scriptId = 'xdl-xhs-state-bridge';
+    if (document.getElementById(scriptId)) return resolve(null);
+
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.textContent = `
+      (function() {
+        try {
+          const state = window.__INITIAL_STATE__ || window.__INITIAL_SSR_STATE__ || (window._SSR_HYDRATED_DATA && window._SSR_HYDRATED_DATA.notes);
+          if (!state) return window.postMessage({ type: 'XDL_XHS_STATE', payload: null }, '*');
+          // 尝试多种常见路径
+          let note = null;
+          if (state.note && state.note.note) note = state.note.note;
+          else if (state.noteData) note = state.noteData;
+          else if (state.note) note = state.note;
+          const video = note && (note.video || note.videoInfo || note.videos && note.videos[0]);
+          const url = video && (video.url || video.urlDefault || video.urlAdapt || video.originUrl || video.h264Url || video.src);
+          window.postMessage({ type: 'XDL_XHS_STATE', payload: url || null }, '*');
+        } catch (e) {
+          window.postMessage({ type: 'XDL_XHS_STATE', payload: null }, '*');
+        }
+      })();
+    `;
+    document.head.appendChild(script);
+
+    const handler = (e) => {
+      if (e.source !== window || e.data?.type !== 'XDL_XHS_STATE') return;
+      window.removeEventListener('message', handler);
+      script.remove();
+      resolve(e.data.payload);
+    };
+    window.addEventListener('message', handler);
+    setTimeout(() => { window.removeEventListener('message', handler); script.remove(); resolve(null); }, 2000);
+  });
+}
+
+async function handleXhsDownload(btn) {
+  const videoEl = activeVideo;
+  if (!videoEl) {
+    showToast('❌ 未找到视频元素');
+    return;
+  }
+
+  btn.textContent = '⏳ 解析视频地址...';
+  btn.style.pointerEvents = 'none';
+
+  let url = extractXhsVideoUrl(videoEl);
+
+  if (!url) {
+    url = await tryGetXhsVideoFromPageState();
+  }
+
+  btn.textContent = '⬇ 下载视频';
+  btn.style.pointerEvents = 'auto';
+
+  if (!url || url.startsWith('blob:')) {
+    showToast('❌ 无法获取视频地址（可能是 blob 流或未加载完成）');
+    return;
+  }
+
+  const noteId = location.pathname.match(/\/explore\/([a-zA-Z0-9]+)/)?.[1] || Date.now();
+  const ext = url.split('?')[0].split('.').pop() || 'mp4';
+  const filename = `xhs-video-${noteId}.${ext}`;
+
+  chrome.runtime.sendMessage(
+    { action: 'xdl-download', url, filename },
+    (response) => {
+      if (response?.success) {
+        showToast('✅ 开始下载小红书视频');
+      } else {
+        showToast('❌ 下载失败: ' + (response?.error || '未知错误'));
+      }
+    }
+  );
+}
+
 // ---------- 跟踪视频位置 ----------
-function trackAndShow(video, tweetId) {
+function trackAndShow(video, meta) {
   const btn = ensureButton();
   if (animFrame) cancelAnimationFrame(animFrame);
 
   activeVideo = video;
-  btn.dataset.tweetId = tweetId;
+  btn.dataset.tweetId = meta?.tweetId || '';
   removePopup();
 
   function updatePos() {
@@ -237,8 +351,8 @@ function trackAndShow(video, tweetId) {
   updatePos();
 }
 
-// ---------- 扫描 ----------
-function scan() {
+// ---------- X/Twitter 扫描 ----------
+function scanX() {
   document.querySelectorAll('article').forEach(tweet => {
     if (tweet.dataset.xdlDone) return;
     const video = tweet.querySelector('video');
@@ -250,16 +364,51 @@ function scan() {
         tweet.dataset.xdlDone = 'true';
         const tweetId = m[1];
         const r = video.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
+        if (r.width === 0 || r.height === 0) return;
         const vpCenter = window.innerHeight / 2;
         const vCenter = r.top + r.height / 2;
         if (Math.abs(vCenter - vpCenter) < window.innerHeight * 0.6) {
-          trackAndShow(video, tweetId);
+          trackAndShow(video, { tweetId });
         }
         break;
       }
     }
   });
+}
+
+// ---------- 小红书扫描 ----------
+function scanXhs() {
+  // 只在小红书详情页处理
+  if (!location.pathname.startsWith('/explore/')) return;
+
+  const videos = Array.from(document.querySelectorAll('video'));
+  if (videos.length === 0) return;
+
+  // 选视口中最大、有有效尺寸的视频
+  let best = null;
+  let bestArea = 0;
+  const vpCenter = window.innerHeight / 2;
+
+  for (const v of videos) {
+    const r = v.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    const area = r.width * r.height;
+    const visible = r.top < window.innerHeight && r.bottom > 0;
+    if (visible && area > bestArea) {
+      bestArea = area;
+      best = v;
+    }
+  }
+
+  if (best && bestArea > 10000) {
+    trackAndShow(best, {});
+  }
+}
+
+// ---------- 统一扫描入口 ----------
+function scan() {
+  if (PLATFORM === 'xhs') scanXhs();
+  else scanX();
 }
 
 // ---------- 事件 ----------

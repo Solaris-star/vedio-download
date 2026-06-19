@@ -1,12 +1,13 @@
-// Background Service Worker v5
-// 使用 twimg syndication API（公开，无需任何认证/令牌）
+// Background Service Worker v6
+// X/Twitter: 使用 twimg syndication API（公开，无需任何认证/令牌）
+// 小红书：content script 直接拿到视频地址，background 只负责下载
 
 async function fetchVideoVariants(tweetId) {
   const url = `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&lang=en&token=0`;
 
   try {
     const resp = await fetch(url, {
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; XDL/5.0)' }
+      headers: { 'user-agent': 'Mozilla/5.0 (compatible; XDL/6.0)' }
     });
 
     if (!resp.ok) {
@@ -58,4 +59,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-console.log('[XDL BG] v5 loaded (syndication API)');
+console.log('[XDL BG] v6 loaded (X/Twitter + 小红书)');
